@@ -1,8 +1,111 @@
 // Tea Timer 
-// Button press stops timer, next press restarts timer
+// Author: Thomas Fehling
+//------------------------------------------------------------
+// Tea Timer Menu and Settings Menu
+
+// Configuration (saved as file teatimer.conf)
+var conf = {
+  startWithMenu: false,
+  timer1: 180,
+  timer2: 300,
+  timer3: 600,
+  load: function() { 
+    var tempConf = require("Storage").readJSON("teatimer.conf", true);
+    if (typeof tempConf != "undefined") {
+      conf.startWithMenu = tempConf.startWithMenu;
+      conf.timer1 = tempConf.timer1;
+      conf.timer2 = tempConf.timer2;
+      conf.timer3 = tempConf.timer3;
+      }
+    },
+  save: function() { require("Storage").writeJSON("teatimer.conf", conf);}
+};
+
+var timer1s =  "T1 ";
+var timer2s =  "T2 ";
+var timer3s =  "T3 ";
+
+function updateMenuItemNames() {
+  timer1s =  "T1 " + timeFormated(conf.timer1);
+  timer2s =  "T2 " + timeFormated(conf.timer2);
+  timer3s =  "T3 " + timeFormated(conf.timer3);  
+}
+
+var menuShownOnce = false;
+
+function showTeaTimerMenu() {
+  menuShownOnce = true;
+  updateMenuItemNames();
+  var timerMenu = {
+    "" : { "title" : "-- Tea Timer --" },
+    };
+  timerMenu[timer1s] = function(){ E.showMenu(); initTimerWithTime(conf.timer1); };
+  timerMenu[timer2s] = function(){ E.showMenu(); initTimerWithTime(conf.timer2); };
+  timerMenu[timer3s] = function(){ E.showMenu(); initTimerWithTime(conf.timer3); };
+  timerMenu.Help = function(){ E.showMenu(); showHelp(0); };
+  timerMenu.Settings = function(){ showSettingsMenu(); };
+  timerMenu.Exit = function (){ E.showMenu(); Bangle.showLauncher(); };
+  E.showMenu(timerMenu);
+}
+
+function showSettingsMenu() {
+  var startMode = "Start Mode: Timer1";
+  if (conf.startWithMenu) { startMode = "Start Mode: Menu"; }
+  var settingsMenu = {
+  "" : { "title" : "Tea Timer Settings" },
+  "< Back" : function() { conf.save(); showTeaTimerMenu(); },
+  };
+  settingsMenu[startMode] = showStartModeMenu;
+  settingsMenu[timer1s] = {
+    value : conf.timer1,
+    min:0,max:6000,step:15,
+    onchange : v => { conf.timer1=v; }
+  };
+  settingsMenu[timer2s] = {
+    value : conf.timer2,
+    min:0,max:6000,step:15,
+    onchange : v => { conf.timer2=v; }
+  };
+  settingsMenu[timer3s] = {
+    value : conf.timer3,
+    min:0,max:6000,step:15,
+    onchange : v => { conf.timer3=v; }
+  };
+  E.showMenu(settingsMenu);
+}
+
+function showStartModeMenu() {
+  var startModeMenu = {
+  "" : { "title" : "Timer Start Mode" },
+  "Start Timer1" : function() { conf.startWithMenu = false; showSettingsMenu(); },
+  "Start with Menu" : function() { conf.startWithMenu = true; showSettingsMenu(); },
+  };
+  E.showMenu(startModeMenu);
+}
+
+//------------------------------------------------------------
+// Help pages
+const helpPages = [
+  "Swipe to move betwenn help pages.\nPress Btn1 to return to tea timer.",
+  "Help: help pages", // page title
+  "Swipe up/down\n+/- one minute\n\nSwipe left/right\n+/- 15 seconds\n\nPress Btn1 to start",
+  "Help: Timer(1)", // page title
+  "Simply tap on the screen to enter the menu.", 
+  "Help: Timer(1)", // page title
+  "The menu lets you select one of three predefined timer values.", 
+  "Help: Menu", // page title
+  "The settings menu lets you edit three predefined timer values. You can also choose the apps start mode.", 
+  "Help: Settings", // page title
+  " "
+  ];
+const maxHelpPages = 8;
+var curHelpPage = 0;
+
+//------------------------------------------------------------
+// Tea Timer
 let drag;
 var counter = 0;
-var counterStart = 150; // 150 seconds
+var counterStart = 0;
 var counterInterval;
 const states = {
   init: 1, // unused
@@ -10,7 +113,8 @@ const states = {
   start: 4, // show/change initial counter
   count: 8, // count down
   countUp: 16, // count up after timer finished
-  stop: 32 // timer stopped
+  menu: 32, // show menu
+  stop: 64 // timer stopped
 };
 var state = states.start;
 E.setTimeZone(1);
@@ -38,6 +142,14 @@ function initTimer() {
   counter = counterStart;
   setState(states.start);
   showCounter(true);
+}
+
+function initTimerWithTime(t){
+  E.showMenu();
+  Bangle.touch = undefined;
+  Bangle.on('touch', function(button, xy) { showMenu(); });
+  counterStart = t;
+  initTimer();
 }
 
 // timer value (counter) can be changed in state start
@@ -78,7 +190,7 @@ function showCounter(withHint) {
   g.drawString(timeFormated(counter),83,100);
   if (withHint) {
     g.setFont("Vector",20); // vector font, 80px
-    g.drawString("Tap for help",80,150);
+    g.drawString("Tap for Menu",80,150);
   }
 }
 
@@ -156,7 +268,8 @@ function stopTimer2() {
   initTimer();
 }
 
-
+//------------------------------------------------------------
+// Manage States and User Input 
 function setState(st) {
   state = st;
 }
@@ -181,20 +294,22 @@ function buttonPressed() {
     case states.stop:
       initTimer();
       break;
+    case states.menu:
+      break;
     default:
       initTimer();
       break;
   }
 }
 
-/* Change initial counter value by swiping
+/* Change initial counter value by swiping / next or prev. help page
     swipe up: +1 minute
     swipe down: -1 minute
     swipe right: +15 seconds
     swipe left: -15 seconds */
 function initDragEvents() {
   Bangle.on("drag", e => {
-  if (state == states.start) {
+  if (state == states.start || state == states.help) {
     if (!drag) { // start dragging
       drag = {x: e.x, y: e.y};
     } else if (!e.b) { // released
@@ -202,32 +317,72 @@ function initDragEvents() {
       drag = null;
       if (Math.abs(dx)>Math.abs(dy)+10) {
         // horizontal
-        changeCounter(dx>0 ? 15 : -15);
+        if (state == states.start) {
+          changeCounter(dx>0 ? 15 : -15);
+        }
+        else {
+          showHelp(dx>0 ? 1 : -1);
+        }
       } else if (Math.abs(dy)>Math.abs(dx)+10) {
         // vertical
-        changeCounter(dy>0 ? -60 : 60);
+        if (state == states.start) {
+          changeCounter(dy>0 ? -60 : 60);
+        }
+        else {
+          showHelp(dy>0 ? -1 : 1);
+        }
       }
     }
   }
 });
 }
 
-// show help text while in start state (see initDragEvents())
-function showHelp() {
-  if (state == states.start) {
-    state = states.help;
-    E.showMessage("Swipe up/down\n+/- one minute\n\nSwipe left/right\n+/- 15 seconds\n\nPress Btn1 to start","Tea timer help");
+// show help text (pnr = 0, -1, +1)
+function showHelp(pnr) {
+  state = states.help;
+  if (pnr == 0) { 
+    curHelpPage = 0; // first page
   }
-  // return to start
-  else if (state == states.help) {
-    initTimer();
+  else {
+    // next or previous page
+    curHelpPage += pnr*2;
+    if (curHelpPage < 0 || curHelpPage > maxHelpPages) { curHelpPage = 0; }
+  }
+  E.showMessage(helpPages[curHelpPage],helpPages[curHelpPage+1]);
+}
+
+// show tea timer menu on touch while in start state, else do nothing
+function showMenu() {
+  if (state == states.start) {
+    setState(states.menu);
+    if (menuShownOnce) {
+      E.showPrompt("This is for technical reasons...",
+        {title: "Press Continue",
+          buttons: {"Continue":1}}
+        ).then(function(v) { showTeaTimerMenu(); });
+    }
+    else {
+      showTeaTimerMenu();
+    }
   }
 }
 
-// drag events in start state (to change counter value)
-initDragEvents();
-// Show help test in start state
-Bangle.on('touch', function(button, xy) { showHelp(); });
-// event handling for button1
-setWatch(buttonPressed, BTN1, {repeat: true});
-initTimer();
+//------------------------------------------------------------
+
+  // drag events in start state (to change counter value)
+  initDragEvents();
+  // Show help text in start state
+  //Bangle.on('touch', function(button, xy) { showMenu(); });
+  // event handling for button1
+  setWatch(buttonPressed, BTN1, {repeat: true});
+	// read configuration
+	conf.load();
+	if (conf.startWithMenu) {
+		// display menu at start
+    setState(states.menu);
+		showTeaTimerMenu();
+	}
+	else // start with timer and use timer default value
+	{
+    initTimerWithTime(conf.timer1);
+	}
